@@ -48,8 +48,26 @@ async def _ensure_sql_only_tables():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
-    await _ensure_sql_only_tables()
+    try:
+        await init_db()
+        print("[INIT] DB pool created")
+    except Exception as e:
+        import traceback
+        print(f"[FATAL] init_db failed: {e}")
+        traceback.print_exc()
+        yield
+        return
+
+    try:
+        await _ensure_sql_only_tables()
+        print("[INIT] Tables ensured")
+    except Exception as e:
+        import traceback
+        print(f"[FATAL] _ensure_sql_only_tables failed: {e}")
+        traceback.print_exc()
+        yield
+        await close_db()
+        return
 
     try:
         from app.cache import cache
