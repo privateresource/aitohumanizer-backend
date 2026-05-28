@@ -1,4 +1,5 @@
 import os
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -50,49 +51,47 @@ async def _ensure_sql_only_tables():
 async def lifespan(app: FastAPI):
     try:
         await init_db()
-        print("[INIT] DB pool created")
+        print("[INIT] DB pool created", flush=True)
     except Exception as e:
         import traceback
-        print(f"[FATAL] init_db failed: {e}")
+        print(f"[FATAL] init_db failed: {e}", flush=True)
         traceback.print_exc()
-        yield
-        return
+        print("[INIT] Continuing without DB - serving degraded", flush=True)
 
-    try:
-        await _ensure_sql_only_tables()
-        print("[INIT] Tables ensured")
-    except Exception as e:
-        import traceback
-        print(f"[FATAL] _ensure_sql_only_tables failed: {e}")
-        traceback.print_exc()
-        yield
-        await close_db()
-        return
+    if app.db.neon.pool:
+        try:
+            await _ensure_sql_only_tables()
+            print("[INIT] Tables ensured", flush=True)
+        except Exception as e:
+            import traceback
+            print(f"[FATAL] _ensure_sql_only_tables failed: {e}", flush=True)
+            traceback.print_exc()
 
-    try:
-        from app.cache import cache
-        await cache.load_all_plans()
-        print(f"[CACHE] Loaded {cache.stats()['total_keys']} keys from Neon")
-    except Exception as e:
-        import traceback
-        print(f"[WARN] Cache init failed: {e}")
-        traceback.print_exc()
+        try:
+            from app.cache import cache
+            await cache.load_all_plans()
+            print(f"[CACHE] Loaded {cache.stats()['total_keys']} keys from Neon", flush=True)
+        except Exception as e:
+            import traceback
+            print(f"[WARN] Cache init failed: {e}", flush=True)
+            traceback.print_exc()
 
-    try:
-        from app.api.deps import _get_session_factory
-        from app.llm.init import init_providers
-        factory = _get_session_factory()
-        async with factory() as session:
-            await init_providers(session)
-    except Exception as e:
-        import traceback
-        print(f"[FATAL] init_providers failed: {e}")
-        traceback.print_exc()
+        try:
+            from app.api.deps import _get_session_factory
+            from app.llm.init import init_providers
+            factory = _get_session_factory()
+            async with factory() as session:
+                await init_providers(session)
+        except Exception as e:
+            import traceback
+            print(f"[FATAL] init_providers failed: {e}", flush=True)
+            traceback.print_exc()
 
     yield
     await close_db()
 
 
+print("[STARTUP] Importing modules...", flush=True)
 app = FastAPI(
     title="AiToHumanizer API",
     version="1.0.0",
@@ -129,6 +128,8 @@ app.include_router(public_plans.router, prefix="/api/v1")
 app.include_router(grammar.router, prefix="/api/v1")
 app.include_router(coupons.router, prefix="/api/v1")
 app.include_router(admin_cache.router, prefix="/api/v1")
+
+print("[STARTUP] App initialized successfully", flush=True)
 
 
 @app.get("/", tags=["root"])
