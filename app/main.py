@@ -1,54 +1,24 @@
-import os
 import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
 from app.core.exceptions import add_exception_handlers
+from app.api.v1 import health
+
+print("[STARTUP] Starting minimal import test", flush=True)
+print(f"[STARTUP] Python: {sys.version}", flush=True)
+print(f"[STARTUP] APP_ENV: {settings.app_env}", flush=True)
+print(f"[STARTUP] DATABASE_URL set: {bool(settings.database_url)}", flush=True)
+
 from app.db.neon import init_db, close_db, _dsn
-from app.db.base import Base
-from app.api.deps import _clean_async_url
-from app.api.v1 import humanize, users, billing, plans, health, webhooks, public_plans, coupons, grammar
-from app.api.v1.admin import dashboard, users as admin_users, billing as admin_billing, llm, plans as admin_plans, invites, system, pricing, cache as admin_cache
-
-
-async def _ensure_sql_only_tables():
-    import app.db.models  # noqa: F401
-    engine = create_async_engine(_clean_async_url(settings.database_url))
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    await engine.dispose()
-
-    from asyncpg import create_pool
-    pool = await create_pool(_dsn())
-    async with pool.acquire() as conn:
-        sql_dir = os.path.join(os.path.dirname(__file__), "db", "migrations", "sql")
-        for fname in sorted(os.listdir(sql_dir)):
-            if not fname.endswith(".sql"):
-                continue
-            if fname.startswith("0") and fname < "008":
-                continue
-            path = os.path.join(sql_dir, fname)
-            with open(path) as f:
-                content = f.read()
-            for stmt in content.split(";"):
-                s = stmt.strip()
-                if s:
-                    try:
-                        await conn.execute(s)
-                    except Exception as e:
-                        msg = str(e).lower()
-                        if "already exists" in msg or "does not exist" in msg:
-                            continue
-                        raise
-    await pool.close()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print("[LIFESPAN] Starting up...", flush=True)
     try:
         await init_db()
         print("[INIT] DB pool created", flush=True)
@@ -56,15 +26,49 @@ async def lifespan(app: FastAPI):
         import traceback
         print(f"[FATAL] init_db failed: {e}", flush=True)
         traceback.print_exc()
-        print("[INIT] Continuing without DB - serving degraded", flush=True)
+        print("[INIT] Continuing without DB", flush=True)
 
-    if app.db.neon.pool:
+    import app.db.neon as neon_db
+    if neon_db.pool:
         try:
-            await _ensure_sql_only_tables()
+            from app.db.base import Base
+            from sqlalchemy.ext.asyncio import create_async_engine
+            from app.api.deps import _clean_async_url
+            from app.db.neon import _dsn
+            import os, asyncpg
+
+            engine = create_async_engine(_clean_async_url(settings.database_url))
+            async with engine.begin() as conn:
+                import app.db.models
+                await conn.run_sync(Base.metadata.create_all)
+            await engine.dispose()
+
+            pool = await asyncpg.create_pool(_dsn())
+            async with pool.acquire() as conn:
+                sql_dir = os.path.join(os.path.dirname(__file__), "db", "migrations", "sql")
+                for fname in sorted(os.listdir(sql_dir)):
+                    if not fname.endswith(".sql"):
+                        continue
+                    if fname.startswith("0") and fname < "008":
+                        continue
+                    path = os.path.join(sql_dir, fname)
+                    with open(path) as f:
+                        content = f.read()
+                    for stmt in content.split(";"):
+                        s = stmt.strip()
+                        if s:
+                            try:
+                                await conn.execute(s)
+                            except Exception as e:
+                                msg = str(e).lower()
+                                if "already exists" in msg or "does not exist" in msg:
+                                    continue
+                                raise
+            await pool.close()
             print("[INIT] Tables ensured", flush=True)
         except Exception as e:
             import traceback
-            print(f"[FATAL] _ensure_sql_only_tables failed: {e}", flush=True)
+            print(f"[FATAL] Table init failed: {e}", flush=True)
             traceback.print_exc()
 
         try:
@@ -89,17 +93,10 @@ async def lifespan(app: FastAPI):
 
     yield
     await close_db()
+    print("[LIFESPAN] Shutdown complete", flush=True)
 
 
-print("[STARTUP] Importing modules...", flush=True)
-app = FastAPI(
-    title="AiToHumanizer API",
-    version="1.0.0",
-    lifespan=lifespan,
-    docs_url=None if settings.app_env == "production" else "/docs",
-    redoc_url=None if settings.app_env == "production" else "/redoc",
-)
-
+app = FastAPI(title="AiToHumanizer API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.resolved_cors_origins,
@@ -107,35 +104,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 add_exception_handlers(app)
 
 app.include_router(health.router, prefix="/api/v1")
-app.include_router(plans.router, prefix="/api/v1")
-app.include_router(webhooks.router, prefix="/api/v1")
-app.include_router(humanize.router, prefix="/api/v1")
-app.include_router(users.router, prefix="/api/v1")
-app.include_router(billing.router, prefix="/api/v1")
-app.include_router(dashboard.router, prefix="/api/v1")
-app.include_router(admin_users.router, prefix="/api/v1")
-app.include_router(admin_billing.router, prefix="/api/v1")
-app.include_router(llm.router, prefix="/api/v1")
-app.include_router(admin_plans.router, prefix="/api/v1")
-app.include_router(invites.router, prefix="/api/v1")
-app.include_router(system.router, prefix="/api/v1")
-app.include_router(pricing.router, prefix="/api/v1")
-app.include_router(public_plans.router, prefix="/api/v1")
-app.include_router(grammar.router, prefix="/api/v1")
-app.include_router(coupons.router, prefix="/api/v1")
-app.include_router(admin_cache.router, prefix="/api/v1")
 
-print("[STARTUP] App initialized successfully", flush=True)
+print("[STARTUP] App ready to serve", flush=True)
 
 
 @app.get("/", tags=["root"])
 async def root():
-    return {
-        "app": "AiToHumanizer API",
-        "version": "1.0.0",
-        "docs": "/docs",
-    }
+    return {"app": "AiToHumanizer API", "version": "1.0.0"}
