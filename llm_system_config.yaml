@@ -1,0 +1,44 @@
+llm:
+  default_provider: deepseek
+  max_tokens: 1024
+  temperature: 0.7
+  timeout_seconds: 30
+  fallback_enabled: true
+  max_fallback_depth: 5
+
+providers:
+  openai_compatible:
+    - name: deepseek
+      base_url: "https://api.deepseek.com/v1"
+      models:
+        - "deepseek-chat"
+        - "deepseek-reasoner"
+    - name: openai
+      base_url: "https://api.openai.com/v1"
+      models:
+        - "gpt-4o"
+        - "gpt-4o-mini"
+
+  anthropic:
+    - name: anthropic
+      models:
+        - "claude-3-5-sonnet-20241022"
+        - "claude-3-haiku-20240307"
+
+humanize_modes:
+  standard:
+    temperature: 0.7
+    provider: openai_compatible
+    model: deepseek-chat
+  academic:
+    temperature: 0.5
+    provider: openai_compatible
+    model: deepseek-chat
+  casual:
+    temperature: 0.8
+    provider: openai_compatible
+    model: deepseek-chat
+  turbo:
+    temperature: 0.9
+    provider: openai_compatible
+    model: gpt-4o-mini

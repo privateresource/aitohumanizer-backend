@@ -1,0 +1,1 @@
+Paraphrase this text by expanding it with more detail and explanation. Clarify complex ideas, add context where needed, and express the same meaning in a more thorough way. Do not change the original message.
