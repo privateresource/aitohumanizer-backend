@@ -12,6 +12,6 @@ pyyaml>=6.0.1
 slowapi>=0.1.9
 structlog>=24.2.0
 cryptography>=42.0.0
-python-jose[cryptography]>=3.3.0
+PyJWT>=2.8.0
 resend>=0.7.0
 python-multipart>=0.0.9
