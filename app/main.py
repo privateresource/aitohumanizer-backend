@@ -10,88 +10,15 @@ from app.api.v1 import health
 from app.api.v1 import humanize, users, billing, plans, webhooks, public_plans, coupons, grammar
 from app.api.v1.admin import dashboard, users as admin_users, billing as admin_billing, llm, plans as admin_plans, invites, system, pricing, cache as admin_cache
 
+print("[STARTUP] Python:", sys.version, flush=True)
+print("[STARTUP] APP_ENV:", settings.app_env, flush=True)
 print("[STARTUP] All modules loaded", flush=True)
-
-from app.db.neon import init_db, close_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("[LIFESPAN] Starting up...", flush=True)
-    try:
-        await init_db()
-        print("[INIT] DB pool created", flush=True)
-    except Exception as e:
-        import traceback
-        print(f"[FATAL] init_db failed: {e}", flush=True)
-        traceback.print_exc()
-        print("[INIT] Continuing without DB", flush=True)
-
-    import app.db.neon as neon_db
-    if neon_db.pool:
-        try:
-            from app.db.base import Base
-            from sqlalchemy.ext.asyncio import create_async_engine
-            from app.api.deps import _clean_async_url
-            from app.db.neon import _dsn
-            import os, asyncpg
-
-            engine = create_async_engine(_clean_async_url(settings.database_url))
-            async with engine.begin() as conn:
-                import app.db.models
-                await conn.run_sync(Base.metadata.create_all)
-            await engine.dispose()
-
-            pool = await asyncpg.create_pool(_dsn())
-            async with pool.acquire() as conn:
-                sql_dir = os.path.join(os.path.dirname(__file__), "db", "migrations", "sql")
-                for fname in sorted(os.listdir(sql_dir)):
-                    if not fname.endswith(".sql"):
-                        continue
-                    if fname.startswith("0") and fname < "008":
-                        continue
-                    path = os.path.join(sql_dir, fname)
-                    with open(path) as f:
-                        content = f.read()
-                    for stmt in content.split(";"):
-                        s = stmt.strip()
-                        if s:
-                            try:
-                                await conn.execute(s)
-                            except Exception as e:
-                                msg = str(e).lower()
-                                if "already exists" in msg or "does not exist" in msg:
-                                    continue
-                                raise
-            await pool.close()
-            print("[INIT] Tables ensured", flush=True)
-        except Exception as e:
-            import traceback
-            print(f"[FATAL] Table init failed: {e}", flush=True)
-            traceback.print_exc()
-
-        try:
-            from app.cache import cache
-            await cache.load_all_plans()
-            print(f"[CACHE] Loaded {cache.stats()['total_keys']} keys from Neon", flush=True)
-        except Exception as e:
-            import traceback
-            print(f"[WARN] Cache init failed: {e}", flush=True)
-            traceback.print_exc()
-
-        try:
-            from app.api.deps import _get_session_factory
-            from app.llm.init import init_providers
-            factory = _get_session_factory()
-            async with factory() as session:
-                await init_providers(session)
-        except Exception as e:
-            import traceback
-            print(f"[FATAL] init_providers failed: {e}", flush=True)
-            traceback.print_exc()
-
     yield
-    await close_db()
     print("[LIFESPAN] Shutdown complete", flush=True)
 
 
