@@ -1,5 +1,5 @@
 from app.llm.fallback.fallback_engine import FallbackEngine
-from app.llm.providers.base_provider import LLMRequest
+from app.llm.providers.base_provider import LLMRequest, LLMResponse
 from app.llm.prompts.prompt_builder import build_pass_system_prompt, build_pass_user_prompt
 from app.llm.prompts.pass_temperatures import get_pass_temperature
 
@@ -9,7 +9,8 @@ async def run_pass1(
     text: str,
     chain_type: str,
     max_tokens: int,
-) -> str:
+    preferred_provider_id: str = None,
+) -> LLMResponse:
     system = build_pass_system_prompt(1)
     user = build_pass_user_prompt(1, text)
 
@@ -22,5 +23,4 @@ async def run_pass1(
         timeout=120,
     )
 
-    resp = await fallback.humanize_with_fallback(request=req, chain_type=chain_type)
-    return resp.text or ""
+    return await fallback.humanize_with_fallback(request=req, chain_type=chain_type, preferred_provider_id=preferred_provider_id)

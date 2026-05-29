@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     backend_url: str = "http://localhost:8000"
     jwks_cache_ttl: int = 86400
     cors_origins: list[str] = []
+    upstash_redis_url: str = ""
+    upstash_redis_token: str = ""
 
     @property
     def resolved_cors_origins(self) -> list[str]:

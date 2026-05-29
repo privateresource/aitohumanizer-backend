@@ -44,17 +44,31 @@ async def init_providers(db: AsyncSession) -> None:
         providers[provider_id] = p
         cache.set_provider(provider_id, p)
 
+    key_count = 0
     try:
         key_result = await db.execute(
             text("SELECT provider_id, encrypted_key, label FROM llm_provider_keys WHERE is_active = TRUE AND is_parked = FALSE")
         )
         for key_row in key_result.fetchall():
-            decrypted = decrypt_key(key_row.encrypted_key)
+            try:
+                decrypted = decrypt_key(key_row.encrypted_key)
+            except Exception as exc:
+                logger.warning(
+                    "provider_key_decryption_failed",
+                    provider_id=str(key_row.provider_id),
+                    label=key_row.label,
+                    error=str(exc),
+                    exc_info=True,
+                )
+                continue
             cache.add_key(str(key_row.provider_id), decrypted, key_row.label or "")
+            key_count += 1
     except Exception:
-        logger.warning("no_keys_found", exc_info=True)
+        logger.warning("llm_key_load_failed", exc_info=True)
 
     provider_ids = list(providers.keys())
+    if providers and key_count == 0:
+        logger.warning("no_active_llm_keys_loaded", provider_count=len(providers))
     chains = {}
     for mode in HUMANIZE_MODES + PARAPHRASE_MODES:
         chains[mode] = list(provider_ids)

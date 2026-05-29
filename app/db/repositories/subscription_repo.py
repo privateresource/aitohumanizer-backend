@@ -35,6 +35,14 @@ class SubscriptionRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_customer_id(self, customer_id: str) -> list[Subscription]:
+        result = await self.session.execute(
+            select(Subscription).where(
+                Subscription.paddle_customer_id == customer_id
+            )
+        )
+        return list(result.scalars().all())
+
     async def create(self, subscription: Subscription) -> Subscription:
         self.session.add(subscription)
         await self.session.commit()

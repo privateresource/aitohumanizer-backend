@@ -1,0 +1,1 @@
+Paraphrase this text in a formal academic tone. Use precise vocabulary, complex sentence structures, and scholarly language appropriate for research papers or essays. Maintain rigorous grammatical correctness and an objective, authoritative style. Do not simplify the language.

@@ -1,14 +1,12 @@
 import base64
 import hashlib
-import logging
 from typing import Optional
 
 from cryptography.fernet import Fernet
 
 from app.core.config import settings
 from app.llm.providers.base_provider import BaseLLMProvider
-
-logger = logging.getLogger(__name__)
+from app.llm.utils.logger import logger
 
 CONSECUTIVE_FAILURE_LIMIT = 3
 

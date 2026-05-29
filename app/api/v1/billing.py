@@ -26,6 +26,7 @@ from app.billing.paddle_client import (
     create_price,
     get_subscription as paddle_get_subscription,
     cancel_subscription as paddle_cancel_subscription,
+    list_customer_transactions,
 )
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -358,3 +359,133 @@ async def get_subscription(
         created_at=subscription.created_at.isoformat(),
         updated_at=subscription.updated_at.isoformat(),
     )
+
+
+class TransactionItem(BaseModel):
+    id: str
+    plan_name: Optional[str] = None
+    billing_cycle: Optional[str] = None
+    status: str
+    amount: float
+    currency: str
+    payment_method: Optional[str] = None
+    invoice_url: Optional[str] = None
+    receipt_url: Optional[str] = None
+    paid_at: Optional[str] = None
+    created_at: str
+
+
+class TransactionListResponse(BaseModel):
+    items: list[TransactionItem]
+    total: int
+
+
+@router.get("/transactions", response_model=TransactionListResponse)
+async def get_transactions(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    from app.db.repositories.transaction_repo import TransactionRepository
+    repo = TransactionRepository(session)
+    txns, total = await repo.get_by_user(current_user.id, limit=100)
+
+    items = []
+    for txn in txns:
+        items.append(
+            TransactionItem(
+                id=str(txn.id),
+                plan_name=txn.plan_name,
+                billing_cycle=txn.billing_cycle,
+                status=txn.status,
+                amount=float(txn.amount),
+                currency=txn.currency,
+                payment_method=txn.payment_method,
+                invoice_url=txn.invoice_url,
+                receipt_url=txn.receipt_url,
+                paid_at=txn.paid_at.isoformat() if txn.paid_at else None,
+                created_at=txn.created_at.isoformat(),
+            )
+        )
+
+    if not txns:
+        sub_repo = SubscriptionRepository(session)
+        sub = await sub_repo.get_by_user(current_user.id)
+        if sub and sub.paddle_customer_id:
+            try:
+                paddle_txns = await list_customer_transactions(sub.paddle_customer_id)
+                for pt in paddle_txns:
+                    txn_id = pt.get("id", "")
+                    existing = await repo.get_by_paddle_id(txn_id)
+                    if existing:
+                        continue
+                    details = pt.get("details", {})
+                    line_items = details.get("line_items", [])
+                    plan_name = None
+                    billing_cycle = None
+                    amount = 0
+                    for item in line_items:
+                        price = item.get("price", {})
+                        product = price.get("product", {})
+                        if product:
+                            plan_name = product.get("name") or plan_name
+                        billing = price.get("billing_cycle", {})
+                        if billing:
+                            interval = billing.get("interval", "")
+                            billing_cycle = "yearly" if interval == "year" else "monthly"
+                        unit_price = price.get("unit_price", {})
+                        item_amount = unit_price.get("amount", "0")
+                        qty = item.get("quantity", 1)
+                        try:
+                            amount += float(item_amount) * qty
+                        except (ValueError, TypeError):
+                            pass
+                    payouts = pt.get("payouts", [])
+                    payment_method = None
+                    if payouts:
+                        payment_method = payouts[0].get("type")
+                    invoices = pt.get("invoices", [])
+                    invoice_url = invoices[0].get("url") if invoices else None
+                    receipt_url = invoices[0].get("receipt_url") if invoices else None
+                    paid_at_str = pt.get("paid_at") or pt.get("created_at")
+                    paid_at = None
+                    if paid_at_str:
+                        try:
+                            paid_at = datetime.fromisoformat(paid_at_str.replace("Z", "+00:00"))
+                        except (ValueError, AttributeError):
+                            pass
+                    pt_status = pt.get("status", "completed")
+
+                    from decimal import Decimal
+                    txn = await repo.upsert_from_paddle(
+                        user_id=current_user.id,
+                        paddle_id=txn_id,
+                        customer_id=sub.paddle_customer_id,
+                        plan_name=plan_name,
+                        billing_cycle=billing_cycle,
+                        status=pt_status,
+                        amount=Decimal(str(amount)).quantize(Decimal("0.01")),
+                        currency="USD",
+                        payment_method=payment_method,
+                        invoice_url=invoice_url,
+                        receipt_url=receipt_url,
+                        paid_at=paid_at,
+                    )
+                    items.append(
+                        TransactionItem(
+                            id=str(txn.id),
+                            plan_name=txn.plan_name,
+                            billing_cycle=txn.billing_cycle,
+                            status=txn.status,
+                            amount=float(txn.amount),
+                            currency=txn.currency,
+                            payment_method=txn.payment_method,
+                            invoice_url=txn.invoice_url,
+                            receipt_url=txn.receipt_url,
+                            paid_at=txn.paid_at.isoformat() if txn.paid_at else None,
+                            created_at=txn.created_at.isoformat(),
+                        )
+                    )
+            except Exception as e:
+                logger.error("Failed to fetch transactions from Paddle: %s", e)
+
+    return TransactionListResponse(items=items, total=len(items))

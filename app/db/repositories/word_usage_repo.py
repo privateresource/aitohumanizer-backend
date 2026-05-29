@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.word_usage import WordUsage
@@ -15,34 +15,33 @@ class WordUsageRepository:
     async def get_balance(
         self, user_id: uuid.UUID, plan_words_per_month: int
     ) -> int:
-        now = datetime.now(timezone.utc)
-        period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-        result = await self.session.execute(
-            select(func.coalesce(func.sum(WordUsage.words_used), 0)).where(
-                and_(
-                    WordUsage.user_id == user_id,
-                    WordUsage.period_start >= period_start,
-                )
-            )
-        )
-        used = result.scalar_one()
-
         if plan_words_per_month == -1:
             return 999999999
 
-        remaining = plan_words_per_month - used
-        return max(0, remaining)
+        period = datetime.now(timezone.utc).strftime("%Y-%m")
+        result = await self.session.execute(
+            select(func.coalesce(func.sum(WordUsage.words_delta), 0)).where(
+                and_(
+                    WordUsage.user_id == user_id,
+                    WordUsage.billing_period == period,
+                )
+            )
+        )
+        delta_total = result.scalar_one()
+
+        remaining = plan_words_per_month + delta_total
+        return max(0, int(remaining))
 
     async def get_period_usage(
         self, user_id: uuid.UUID, period_start: datetime, period_end: datetime
     ) -> int:
         result = await self.session.execute(
-            select(func.coalesce(func.sum(WordUsage.words_used), 0)).where(
+            select(func.coalesce(func.sum(case((WordUsage.event_type == "humanize_use", -WordUsage.words_delta), else_=0)), 0)).where(
                 and_(
                     WordUsage.user_id == user_id,
-                    WordUsage.period_start >= period_start,
-                    WordUsage.period_start < period_end,
+                    WordUsage.event_type == "humanize_use",
+                    WordUsage.created_at >= period_start,
+                    WordUsage.created_at < period_end,
                 )
             )
         )

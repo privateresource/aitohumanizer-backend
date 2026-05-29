@@ -1,12 +1,18 @@
+import os
+import uuid
+from io import BytesIO
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from PIL import Image
 
 from app.api.deps import get_db_session, get_current_user
 from app.core.exceptions import BadRequestException, NotFoundException
 from app.core.constants import PLAN_LIMITS
+from app.core.config import settings
 from app.db.models.user import User
 from app.db.repositories.user_repo import UserRepository
 from app.db.repositories.humanize_repo import HumanizeRepository
@@ -194,9 +200,18 @@ async def update_me(
 ):
     update_data = {}
     if req.full_name is not None:
-        update_data["full_name"] = req.full_name
+        name = req.full_name.strip()
+        if not name:
+            raise BadRequestException(message="Display name cannot be empty")
+        if len(name) < 3:
+            raise BadRequestException(message="Display name must be at least 3 characters")
+        if len(name) > 32:
+            raise BadRequestException(message="Display name must be 32 characters or fewer")
+        update_data["full_name"] = name
     if req.avatar_url is not None:
-        update_data["avatar_url"] = req.avatar_url
+        if req.avatar_url and not req.avatar_url.startswith(("http://", "https://", "/")):
+            raise BadRequestException(message="Invalid avatar URL format")
+        update_data["avatar_url"] = req.avatar_url if req.avatar_url else None
 
     if not update_data:
         raise BadRequestException(message="No fields to update")
@@ -213,6 +228,113 @@ async def update_me(
         avatar_url=updated.avatar_url,
         updated_at=updated.updated_at.isoformat(),
     )
+
+
+AVATAR_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "avatars")
+AVATAR_MAX_SIZE = 400
+AVATAR_MAX_BYTES = 5 * 1024 * 1024
+ALLOWED_MIME_PREFIXES = ("image/jpeg", "image/png", "image/webp", "image/gif")
+
+
+def _delete_avatar_file(url: str | None):
+    if not url:
+        return
+    filename = url.split("/")[-1]
+    filepath = os.path.join(AVATAR_DIR, filename)
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
+
+def _resize_avatar(image: Image.Image) -> Image.Image:
+    w, h = image.size
+    if w <= AVATAR_MAX_SIZE and h <= AVATAR_MAX_SIZE:
+        return image
+    ratio = AVATAR_MAX_SIZE / max(w, h)
+    new_size = (int(w * ratio), int(h * ratio))
+    return image.resize(new_size, Image.Lanczos)
+
+
+@router.post("/me/avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    if not file.content_type or not file.content_type.startswith(ALLOWED_MIME_PREFIXES):
+        raise BadRequestException(message="Only JPEG, PNG, WebP, and GIF images are allowed")
+
+    content = await file.read()
+    if len(content) > AVATAR_MAX_BYTES:
+        raise BadRequestException(message=f"File must be under {AVATAR_MAX_BYTES // (1024*1024)}MB")
+
+    try:
+        image = Image.open(BytesIO(content))
+        image.verify()
+        image = Image.open(BytesIO(content))
+    except Exception:
+        raise BadRequestException(message="Invalid or corrupted image file")
+
+    os.makedirs(AVATAR_DIR, exist_ok=True)
+
+    image = _resize_avatar(image)
+
+    ext = ".jpg"
+    if file.content_type == "image/png":
+        ext = ".png"
+    elif file.content_type == "image/webp":
+        ext = ".webp"
+    elif file.content_type == "image/gif":
+        ext = ".gif"
+
+    filename = f"{uuid.uuid4()}{ext}"
+    filepath = os.path.join(AVATAR_DIR, filename)
+
+    save_kwargs = {"optimize": True}
+    if ext in (".jpg", ".jpeg"):
+        save_kwargs["quality"] = 85
+    elif ext == ".png":
+        save_kwargs["compress_level"] = 6
+    elif ext == ".webp":
+        save_kwargs["quality"] = 85
+
+    try:
+        image.save(filepath, **save_kwargs)
+    except Exception:
+        raise BadRequestException(message="Failed to save avatar")
+
+    old_url = current_user.avatar_url
+    _delete_avatar_file(old_url)
+
+    repo = UserRepository(session)
+    await repo.update(current_user.id, {"avatar_url": filename})
+
+    return {"avatar_url": filename}
+
+
+@router.get("/me/avatar/file/{filename}")
+async def get_avatar_file(filename: str):
+    filepath = os.path.join(AVATAR_DIR, filename)
+    if not os.path.exists(filepath):
+        raise NotFoundException(message="Avatar not found")
+    media_type = "image/jpeg"
+    if filename.endswith(".png"):
+        media_type = "image/png"
+    elif filename.endswith(".webp"):
+        media_type = "image/webp"
+    elif filename.endswith(".gif"):
+        media_type = "image/gif"
+    return FileResponse(filepath, media_type=media_type)
+
+
+@router.delete("/me/avatar")
+async def delete_avatar(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    _delete_avatar_file(current_user.avatar_url)
+    repo = UserRepository(session)
+    await repo.update(current_user.id, {"avatar_url": None})
+    return {"avatar_url": None}
 
 
 @router.get("/me/history", response_model=HistoryResponse)

@@ -1,0 +1,1 @@
+Paraphrase this text with expressive, vivid language. Use creative word choices, dynamic sentence structures, and engaging phrasing. Make it lively and imaginative while keeping the exact same meaning. Avoid clichés and predictable expressions.

@@ -1,7 +1,7 @@
 PASS_TEMPERATURES = {
-    1: 0.7,   # Pass 1 — Structure Humanizer: balanced rewrites
-    2: 0.8,   # Pass 2 — Tone + Imperfection: creative variation
-    3: 0.3,   # Pass 3 — Final Polish: conservative edits
+    1: 0.5,   # Pass 1 — Structure Humanizer: balanced rewrites
+    2: 1.3,   # Pass 2 — Tone + Imperfection: creative variation
+    3: 0.65,   # Pass 3 — Final Polish: conservative edits
 }
 
 

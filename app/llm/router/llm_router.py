@@ -12,6 +12,33 @@ from app.llm.utils.logger import logger
 from app.llm.utils.sanitizer import sanitize_input, clean_llm_output
 
 
+BUILT_IN_MOODS: dict[str, str] = {
+    "neutral": "No specific tone adjustment.",
+    "confident": "Direct, assertive, no hedging.",
+    "casual": "Relaxed, conversational, like texting a friend.",
+    "formal": "Polished, structured, professional distance.",
+    "storytelling": "Narrative flow, engaging, scene-setting.",
+    "persuasive": "Compelling, rhetorical, conviction-driven.",
+}
+
+
+async def resolve_mood_prompt(mood: Optional[str], user_id: Optional[str], db: Optional[AsyncSession]) -> str:
+    if not mood:
+        return ""
+    if mood in BUILT_IN_MOODS:
+        return BUILT_IN_MOODS[mood]
+    if db and user_id:
+        from sqlalchemy import text
+        result = await db.execute(
+            text("SELECT prompt FROM user_moods WHERE id = :id AND user_id = :uid"),
+            {"id": mood, "uid": user_id},
+        )
+        row = result.fetchone()
+        if row:
+            return row.prompt
+    return mood
+
+
 class LLMRouter:
     def __init__(self, fallback_engine: FallbackEngine):
         self._fallback = fallback_engine
@@ -23,15 +50,19 @@ class LLMRouter:
         user_id: Optional[str] = None,
         preferred_provider_id: Optional[str] = None,
         db: Optional[AsyncSession] = None,
+        mood: Optional[str] = None,
     ) -> dict:
         import time
         sanitized = sanitize_input(text)
+        mood_prompt = await resolve_mood_prompt(mood, user_id, db)
 
         start = time.monotonic()
         pipeline_result = await run_pipeline(
             fallback=self._fallback,
             text=sanitized,
             chain_type=mode,
+            preferred_provider_id=preferred_provider_id,
+            mood_prompt=mood_prompt,
         )
         total_elapsed = int((time.monotonic() - start) * 1000)
 
@@ -39,14 +70,21 @@ class LLMRouter:
         passes = pipeline_result.get("passes_completed", 0)
 
         if not final_text:
-            logger.error("humanize_all_passes_failed", mode=mode, user_id=user_id)
+            error_detail = pipeline_result.get("error") or "All LLM passes returned empty"
+            logger.error(
+                "humanize_all_passes_failed",
+                mode=mode,
+                user_id=user_id,
+                error=error_detail,
+                passes_completed=passes,
+            )
             return {
                 "humanized_text": "",
                 "model": "",
                 "provider": "fallback",
                 "duration_ms": total_elapsed,
                 "tokens_used": 0,
-                "error": "All LLM passes returned empty",
+                "error": error_detail,
                 "mode": mode,
             }
 
@@ -81,10 +119,15 @@ class LLMRouter:
         user_id: Optional[str] = None,
         preferred_provider_id: Optional[str] = None,
         db: Optional[AsyncSession] = None,
+        mood: Optional[str] = None,
     ) -> dict:
         sanitized = sanitize_input(text)
+        mood_prompt = await resolve_mood_prompt(mood, user_id, db)
 
         system_prompt = build_paraphraser_prompt(mode)
+        if mood_prompt:
+            system_prompt += f"\n\nMOOD: {mood_prompt}"
+
         max_tokens = min(max(len(sanitized.split()) * 2, 256), 4096)
         temperature = get_paraphrase_temperature(mode)
 
@@ -102,6 +145,7 @@ class LLMRouter:
         response = await self._fallback.humanize_with_fallback(
             request=request,
             chain_type=mode,
+            preferred_provider_id=preferred_provider_id,
         )
         elapsed_ms = int((time.monotonic() - start) * 1000)
 

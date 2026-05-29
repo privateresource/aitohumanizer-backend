@@ -298,3 +298,181 @@ async def get_revenue(
         churn_rate=churn_rate,
         by_plan=by_plan,
     )
+
+
+class AdminTransactionItem(BaseModel):
+    id: str
+    user_id: str
+    paddle_transaction_id: str
+    plan_name: Optional[str] = None
+    billing_cycle: Optional[str] = None
+    status: str
+    amount: float
+    currency: str
+    payment_method: Optional[str] = None
+    invoice_url: Optional[str] = None
+    paid_at: Optional[str] = None
+    created_at: str
+
+
+class AdminTransactionListResponse(BaseModel):
+    items: list[AdminTransactionItem]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class RevenueStatsItem(BaseModel):
+    label: str
+    value: str
+    change: Optional[str] = None
+    trend: Optional[str] = None
+
+
+class AdminRevenueDashboard(BaseModel):
+    stats: list[RevenueStatsItem]
+    plan_breakdown: list[RevenueByPlan]
+    recent_transactions: list[AdminTransactionItem]
+
+
+@router.get("/transactions", response_model=AdminTransactionListResponse)
+async def list_transactions(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None),
+    current_user: User = Depends(get_admin_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    from app.db.repositories.transaction_repo import TransactionRepository
+    repo = TransactionRepository(session)
+    skip = (page - 1) * page_size
+    txns, total = await repo.list_all(skip=skip, limit=page_size, status_filter=status)
+
+    total_pages = max(1, (total + page_size - 1) // page_size)
+
+    items = []
+    for txn in txns:
+        items.append(
+            AdminTransactionItem(
+                id=str(txn.id),
+                user_id=str(txn.user_id),
+                paddle_transaction_id=txn.paddle_transaction_id,
+                plan_name=txn.plan_name,
+                billing_cycle=txn.billing_cycle,
+                status=txn.status,
+                amount=float(txn.amount),
+                currency=txn.currency,
+                payment_method=txn.payment_method,
+                invoice_url=txn.invoice_url,
+                paid_at=txn.paid_at.isoformat() if txn.paid_at else None,
+                created_at=txn.created_at.isoformat(),
+            )
+        )
+
+    return AdminTransactionListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+@router.get("/revenue/dashboard", response_model=AdminRevenueDashboard)
+async def get_revenue_dashboard(
+    current_user: User = Depends(get_admin_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    admin_repo = AdminRepository(session)
+    revenue = await admin_repo.get_revenue_stats()
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    plan_stats = await session.execute(
+        select(
+            Plan.name,
+            Plan.slug,
+            Plan.price_monthly,
+            Plan.price_yearly,
+            func.count(Subscription.id).label("sub_count"),
+        )
+        .select_from(Subscription)
+        .join(Plan, Subscription.plan_id == Plan.id)
+        .where(Subscription.status.in_(["active", "trialing"]))
+        .group_by(Plan.id, Plan.name, Plan.slug, Plan.price_monthly, Plan.price_yearly)
+    )
+
+    total_mrr = 0.0
+    total_arr = 0.0
+    by_plan = []
+
+    for row in plan_stats:
+        name, slug, price_monthly, price_yearly, sub_count = row
+        plan_mrr = price_monthly * sub_count
+        plan_arr = price_yearly * sub_count
+        total_mrr += plan_mrr
+        total_arr += plan_arr
+        by_plan.append(
+            RevenueByPlan(
+                plan_name=name,
+                plan_slug=slug,
+                active_subs=sub_count,
+                monthly_revenue=round(plan_mrr, 2),
+                yearly_revenue=round(plan_arr, 2),
+            )
+        )
+
+    total_subs = await session.execute(
+        select(func.count(Subscription.id))
+    )
+    total_sub_count = total_subs.scalar_one()
+    churn_rate = 0.0
+    if total_sub_count > 0:
+        canceled_this_month = await session.execute(
+            select(func.count(Subscription.id)).where(
+                Subscription.status == "canceled",
+                Subscription.cancelled_at >= month_start,
+            )
+        )
+        canceled = canceled_this_month.scalar_one()
+        churn_rate = round(canceled / total_sub_count * 100, 2)
+
+    avg_revenue = round(total_mrr / revenue["total_active_subscriptions"], 2) if revenue["total_active_subscriptions"] > 0 else 0
+
+    stats = [
+        RevenueStatsItem(label="Monthly Revenue", value=f"${total_mrr:,.2f}", trend="up"),
+        RevenueStatsItem(label="Active Subscriptions", value=str(revenue["total_active_subscriptions"]), change=f"+{revenue['new_subscriptions_this_month']} this month", trend="up"),
+        RevenueStatsItem(label="Avg. Revenue/User", value=f"${avg_revenue:.2f}", trend="up"),
+        RevenueStatsItem(label="Churn Rate", value=f"{churn_rate}%", trend="down" if churn_rate <= 5 else "up"),
+    ]
+
+    from app.db.repositories.transaction_repo import TransactionRepository
+    txn_repo = TransactionRepository(session)
+    recent_txns, _ = await txn_repo.list_all(skip=0, limit=5)
+
+    recent_items = []
+    for txn in recent_txns:
+        recent_items.append(
+            AdminTransactionItem(
+                id=str(txn.id),
+                user_id=str(txn.user_id),
+                paddle_transaction_id=txn.paddle_transaction_id,
+                plan_name=txn.plan_name,
+                billing_cycle=txn.billing_cycle,
+                status=txn.status,
+                amount=float(txn.amount),
+                currency=txn.currency,
+                payment_method=txn.payment_method,
+                invoice_url=txn.invoice_url,
+                paid_at=txn.paid_at.isoformat() if txn.paid_at else None,
+                created_at=txn.created_at.isoformat(),
+            )
+        )
+
+    return AdminRevenueDashboard(
+        stats=stats,
+        plan_breakdown=by_plan,
+        recent_transactions=recent_items,
+    )

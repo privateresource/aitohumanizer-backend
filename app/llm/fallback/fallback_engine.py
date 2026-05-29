@@ -14,10 +14,18 @@ class FallbackEngine:
         self,
         request: LLMRequest,
         chain_type: str,
+        preferred_provider_id: str = None,
     ) -> LLMResponse:
         chain = self._chains.get(chain_type, list(self._providers.keys()))
         attempts = 0
         errors: list[str] = []
+
+        if preferred_provider_id:
+            if preferred_provider_id in self._providers:
+                chain = [preferred_provider_id] + [p for p in chain if p != preferred_provider_id]
+            else:
+                logger.warning("preferred_provider_not_found", provider_id=preferred_provider_id)
+                errors.append(f"{preferred_provider_id}: provider not found")
 
         cached = llm_response_cache.get(request.user_prompt, chain_type)
         if cached is not None:
@@ -62,9 +70,20 @@ class FallbackEngine:
                 cache.record_failure(provider_id)
                 continue
 
+            if not response.text:
+                logger.warning(
+                    "provider_returned_empty",
+                    provider_id=provider_id,
+                    attempt=attempts,
+                    model=request.model,
+                    base_url=getattr(provider, "base_url", "unknown"),
+                )
+                errors.append(f"{provider_id}: returned empty response")
+                cache.record_failure(provider_id)
+                continue
+
             cache.reset_failures(provider_id)
-            if response.text:
-                llm_response_cache.set(request.user_prompt, chain_type, response.text)
+            llm_response_cache.set(request.user_prompt, chain_type, response.text)
             return response
 
         error_detail = "; ".join(errors) if errors else "All providers exhausted"

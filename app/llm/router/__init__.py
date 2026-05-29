@@ -44,6 +44,7 @@ async def humanize_text(
     preferred_provider_id: str = None,
     db=None,
     user_id: str = None,
+    mood: str = None,
 ) -> dict:
     router = get_router()
     if not router:
@@ -54,6 +55,7 @@ async def humanize_text(
         preferred_provider_id=preferred_provider_id,
         db=db,
         user_id=user_id,
+        mood=mood,
     )
 
 
@@ -63,6 +65,7 @@ async def paraphrase_text(
     preferred_provider_id: str = None,
     db=None,
     user_id: str = None,
+    mood: str = None,
 ) -> dict:
     router = get_router()
     if not router:
@@ -73,6 +76,7 @@ async def paraphrase_text(
         preferred_provider_id=preferred_provider_id,
         db=db,
         user_id=user_id,
+        mood=mood,
     )
 
 
@@ -81,7 +85,7 @@ def get_supported_modes() -> list[str]:
 
 
 def get_paraphrase_modes() -> list[str]:
-    return ["standard", "fluency", "formal", "casual", "shorten", "expand"]
+    return ["standard", "fluency", "formal", "casual", "shorten", "expand", "creative", "academic", "professional"]
 
 
 __all__ = [

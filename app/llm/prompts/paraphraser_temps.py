@@ -8,6 +8,9 @@ PARAPHRASE_TEMPS = {
     "casual": 1.0,
     "shorten": 0.7,
     "expand": 0.9,
+    "creative": 1.0,
+    "academic": 0.6,
+    "professional": 0.7,
 }
 
 

@@ -25,6 +25,11 @@ class UnauthorizedException(AppException):
         super().__init__(message=message, status_code=401, detail=detail)
 
 
+class ServiceUnavailableException(AppException):
+    def __init__(self, message: str = "Service unavailable", detail: dict = None):
+        super().__init__(message=message, status_code=503, detail=detail)
+
+
 class BadRequestException(AppException):
     def __init__(self, message: str = "Bad request", detail: dict = None):
         super().__init__(message=message, status_code=400, detail=detail)

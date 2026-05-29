@@ -196,7 +196,98 @@ async def _handle_subscription_activated(data: dict, session: AsyncSession):
 
 
 async def _handle_transaction_completed(data: dict, session: AsyncSession):
-    logger.info("Transaction completed: %s", data.get("id"))
+    txn_id = data.get("id", "")
+    logger.info("Transaction completed: %s", txn_id)
+
+    from app.db.repositories.transaction_repo import TransactionRepository
+
+    customer_id = data.get("customer_id")
+    status = data.get("status", "completed")
+    currency = "USD"
+
+    details = data.get("details", {})
+    line_items = details.get("line_items", [])
+    plan_name = None
+    billing_cycle = None
+    amount = 0
+
+    for item in line_items:
+        price = item.get("price", {})
+        product = price.get("product", {})
+        if product:
+            plan_name = product.get("name") or plan_name
+        if not billing_cycle:
+            billing = price.get("billing_cycle", {})
+            if billing:
+                interval = billing.get("interval", "")
+                billing_cycle = "yearly" if interval == "year" else "monthly"
+
+        unit_price = price.get("unit_price", {})
+        item_amount = unit_price.get("amount", "0")
+        quantity = item.get("quantity", 1)
+        try:
+            amount += float(item_amount) * quantity
+        except (ValueError, TypeError):
+            pass
+
+    if not plan_name:
+        for item in line_items:
+            pr = item.get("price", {})
+            prod = pr.get("product", {})
+            if prod:
+                plan_name = prod.get("name") or prod.get("description") or plan_name
+                break
+
+    payouts = data.get("payouts", [])
+    payment_method = None
+    if payouts:
+        payment_method = payouts[0].get("type") or payouts[0].get("method")
+
+    invoices = data.get("invoices", [])
+    invoice_url = None
+    receipt_url = None
+    if invoices:
+        invoice_url = invoices[0].get("url")
+        receipt_url = invoices[0].get("receipt_url")
+
+    paid_at_str = data.get("paid_at") or data.get("created_at")
+    paid_at = _parse_dt(paid_at_str)
+
+    from decimal import Decimal
+    amount_decimal = Decimal(str(amount)).quantize(Decimal("0.01"))
+
+    user_repo = UserRepository(session)
+    user = None
+    if customer_id:
+        if hasattr(user_repo, 'get_by_paddle_customer_id'):
+            user = await user_repo.get_by_paddle_customer_id(customer_id)
+    if not user and customer_id:
+        from app.db.repositories.subscription_repo import SubscriptionRepository
+        sub_repo = SubscriptionRepository(session)
+        subs = await sub_repo.get_by_customer_id(customer_id)
+        if subs:
+            sub_user_id = subs[0].user_id
+            user = await user_repo.get_by_id(sub_user_id)
+
+    txn_repo = TransactionRepository(session)
+    existing = await txn_repo.get_by_paddle_id(txn_id)
+    if not existing and user:
+        await txn_repo.upsert_from_paddle(
+            user_id=user.id,
+            paddle_id=txn_id,
+            customer_id=customer_id,
+            plan_name=plan_name,
+            billing_cycle=billing_cycle,
+            status=status,
+            amount=amount_decimal,
+            currency=currency,
+            payment_method=payment_method,
+            invoice_url=invoice_url,
+            receipt_url=receipt_url,
+            paid_at=paid_at,
+        )
+    elif not existing:
+        logger.warning("transaction_no_user_match", txn_id=txn_id, customer_id=customer_id)
 
 
 async def _handle_customer_updated(data: dict, session: AsyncSession):

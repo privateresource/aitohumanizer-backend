@@ -24,6 +24,9 @@ class PricingPlanResponse(BaseModel):
     monthly_price_usd: float
     annual_price_usd: float
     original_price_usd: Optional[float] = None
+    discount_label: Optional[str] = None
+    discount_percentage: Optional[float] = None
+    show_original_price: Optional[bool] = None
     paddle_monthly_price_id: Optional[str] = None
     paddle_annual_price_id: Optional[str] = None
     badge_text: Optional[str] = None
@@ -100,6 +103,11 @@ class FeatureCreate(BaseModel):
     sort_order: int = 0
 
 
+class FeatureUpdate(BaseModel):
+    feature_value: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
 class UsageStatsResponse(BaseModel):
     user_id: str
     tool: str
@@ -130,6 +138,9 @@ def _row_to_plan_response(row, limits=None, features=None) -> PricingPlanRespons
         monthly_price_usd=float(row.monthly_price_usd) if row.monthly_price_usd else 0,
         annual_price_usd=float(row.annual_price_usd) if row.annual_price_usd else 0,
         original_price_usd=float(row.original_price_usd) if row.original_price_usd else None,
+        discount_label=row.discount_label,
+        discount_percentage=float(row.discount_percentage) if row.discount_percentage else None,
+        show_original_price=row.show_original_price,
         paddle_monthly_price_id=row.paddle_monthly_price_id,
         paddle_annual_price_id=row.paddle_annual_price_id,
         badge_text=row.badge_text,
@@ -408,6 +419,42 @@ async def create_plan_feature(
     return FeatureResponse(id=r.id, feature_key=r.feature_key, feature_value=r.feature_value, sort_order=r.sort_order)
 
 
+@router.patch("/plans/{plan_id}/features/{feature_id}", response_model=FeatureResponse)
+async def update_plan_feature(
+    plan_id: int,
+    feature_id: int,
+    req: FeatureUpdate,
+    current_user: User = Depends(get_admin_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    await _get_plan_or_404(session, plan_id)
+
+    updates = []
+    params = {"id": feature_id, "pid": plan_id}
+
+    if req.feature_value is not None:
+        updates.append("feature_value = :val")
+        params["val"] = req.feature_value
+    if req.sort_order is not None:
+        updates.append("sort_order = :order")
+        params["order"] = req.sort_order
+
+    if not updates:
+        raise BadRequestException(message="No fields to update")
+
+    result = await session.execute(
+        text(f"UPDATE plan_features SET {', '.join(updates)} WHERE id = :id AND plan_id = :pid RETURNING *"),
+        params,
+    )
+    await session.commit()
+    await invalidate_all()
+
+    r = result.fetchone()
+    if not r:
+        raise NotFoundException(message="Feature not found")
+    return FeatureResponse(id=r.id, feature_key=r.feature_key, feature_value=r.feature_value, sort_order=r.sort_order)
+
+
 @router.delete("/plans/{plan_id}/features/{feature_id}")
 async def delete_plan_feature(
     plan_id: int,
@@ -564,6 +611,7 @@ class CouponUpdate(BaseModel):
 
 
 class PlanDiscountUpdate(BaseModel):
+    original_price_usd: Optional[float] = None
     discount_percentage: Optional[float] = None
     show_original_price: Optional[bool] = None
     discount_label: Optional[str] = None
@@ -776,7 +824,7 @@ async def set_plan_discount(
     now = datetime.now(timezone.utc)
     updates = []
     params = {"slug": plan_slug, "now": now}
-    for field in ("discount_percentage", "show_original_price", "discount_label"):
+    for field in ("original_price_usd", "discount_percentage", "show_original_price", "discount_label"):
         val = getattr(req, field, None)
         if val is not None:
             updates.append(f"{field} = :{field}")
@@ -807,6 +855,7 @@ async def remove_plan_discount(
     await session.execute(
         text("""
             UPDATE pricing_plans SET
+                original_price_usd = NULL,
                 discount_percentage = 0,
                 show_original_price = false,
                 discount_label = NULL,

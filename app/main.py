@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import settings
@@ -10,7 +11,7 @@ from app.core.exceptions import add_exception_handlers
 from app.db.neon import init_db, close_db, _dsn
 from app.db.base import Base
 from app.api.deps import _clean_async_url
-from app.api.v1 import humanize, users, billing, plans, health, webhooks, public_plans, coupons, grammar
+from app.api.v1 import humanize, users, billing, plans, health, webhooks, public_plans, coupons, grammar, moods
 from app.api.v1.admin import dashboard, users as admin_users, billing as admin_billing, llm, plans as admin_plans, invites, system, pricing, cache as admin_cache
 
 
@@ -93,6 +94,11 @@ app.add_middleware(
 
 add_exception_handlers(app)
 
+import os
+uploads_dir = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(plans.router, prefix="/api/v1")
 app.include_router(webhooks.router, prefix="/api/v1")
@@ -111,6 +117,7 @@ app.include_router(public_plans.router, prefix="/api/v1")
 app.include_router(grammar.router, prefix="/api/v1")
 app.include_router(coupons.router, prefix="/api/v1")
 app.include_router(admin_cache.router, prefix="/api/v1")
+app.include_router(moods.router, prefix="/api/v1")
 
 
 @app.get("/", tags=["root"])

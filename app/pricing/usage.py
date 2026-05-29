@@ -167,3 +167,37 @@ async def get_plan_features(session: AsyncSession, plan_id: int, plan_slug: Opti
     )
     rows = result.fetchall()
     return [{"key": r.feature_key, "value": r.feature_value, "sort_order": r.sort_order} for r in rows]
+
+
+async def get_user_plan_features(session: AsyncSession, user_id: UUID) -> dict[str, str]:
+    result = await session.execute(
+        text("""
+            SELECT pf.feature_key, pf.feature_value
+            FROM subscriptions s
+            JOIN plans p ON p.id = s.plan_id
+            JOIN pricing_plans pp ON pp.legacy_plan_id = p.id
+            LEFT JOIN plan_features pf ON pf.plan_id = pp.id
+            WHERE s.user_id = :uid AND s.status IN ('active', 'trialing')
+        """),
+        {"uid": user_id},
+    )
+    features: dict[str, str] = {}
+    rows = result.fetchall()
+    if rows:
+        for row in rows:
+            if row.feature_key:
+                features[row.feature_key] = row.feature_value
+        return features
+
+    result2 = await session.execute(
+        text("""
+            SELECT pf.feature_key, pf.feature_value
+            FROM pricing_plans pp
+            LEFT JOIN plan_features pf ON pf.plan_id = pp.id
+            WHERE pp.is_free = true
+        """),
+    )
+    for row in result2.fetchall():
+        if row.feature_key:
+            features[row.feature_key] = row.feature_value
+    return features

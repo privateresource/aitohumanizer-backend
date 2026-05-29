@@ -254,26 +254,16 @@ async def adjust_words(
     now = datetime.now(timezone.utc)
     period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-    if req.words > 0:
-        entry = WordUsage(
-            user_id=user_id,
-            words_used=req.words,
-            mode="standard",
-            source="admin_adjustment",
-            request_id=None,
-            period_start=period_start,
-            description=req.description,
-        )
-    else:
-        entry = WordUsage(
-            user_id=user_id,
-            words_used=req.words,
-            mode="standard",
-            source="admin_adjustment",
-            request_id=None,
-            period_start=period_start,
-            description=req.description,
-        )
+    current_balance = await word_repo.get_balance(user_id, words_per_month)
+    entry = WordUsage(
+        user_id=user_id,
+        words_delta=req.words,
+        words_balance_after=current_balance + req.words,
+        event_type="admin_adjustment",
+        reference_id=None,
+        billing_period=period_start.strftime("%Y-%m"),
+        description=req.description,
+    )
 
     await word_repo.add_entry(entry)
 

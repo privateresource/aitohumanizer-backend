@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db_session, get_current_user
 from app.core.constants import PLAN_LIMITS, ANON_LIMITS, WORD_COSTS
-from app.core.exceptions import BadRequestException, QuotaExceededException, ForbiddenException
+from app.core.exceptions import BadRequestException, QuotaExceededException, ForbiddenException, ServiceUnavailableException
 from app.db.models.user import User
 from app.db.models.humanize_request import HumanizeRequest
 from app.db.models.word_usage import WordUsage
@@ -28,6 +28,7 @@ class HumanizeRequestPayload(BaseModel):
     mode: str = "standard"
     preferred_provider_id: Optional[str] = None
     session_id: Optional[str] = None
+    mood: Optional[str] = None
 
 
 class HumanizeResponse(BaseModel):
@@ -89,8 +90,8 @@ async def preview_humanize(
     )
 
     if llm_result.get("error") and not llm_result.get("humanized_text"):
-        raise BadRequestException(
-            message="Humanization failed",
+        raise ServiceUnavailableException(
+            message="Humanization service is unavailable right now. Please try again later.",
             detail={"error": llm_result["error"]},
         )
 
@@ -192,11 +193,12 @@ async def humanize_text(
         preferred_provider_id=req.preferred_provider_id,
         db=session,
         user_id=str(current_user.id),
+        mood=req.mood,
     )
 
     if llm_result.get("error") and not llm_result.get("humanized_text"):
-        raise BadRequestException(
-            message="Humanization failed",
+        raise ServiceUnavailableException(
+            message="Humanization service is unavailable right now. Please try again later.",
             detail={"error": llm_result["error"]},
         )
 
@@ -222,20 +224,19 @@ async def humanize_text(
     if words_per_month != -1:
         word_cost = WORD_COSTS.get(req.mode, 1)
         deduction = word_count * word_cost
-        now = datetime.now(timezone.utc)
-        period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        period = datetime.now(timezone.utc).strftime("%Y-%m")
+        new_remaining = words_remaining - deduction
 
         usage_entry = WordUsage(
             user_id=current_user.id,
-            words_used=deduction,
-            mode=req.mode,
-            source="request",
-            request_id=created.id,
-            period_start=period_start,
+            words_delta=-deduction,
+            words_balance_after=new_remaining,
+            event_type="humanize_use",
+            reference_id=created.id,
+            billing_period=period,
+            description=f"Humanize request ({req.mode})",
         )
         await word_repo.add_entry(usage_entry)
-
-        new_remaining = words_remaining - deduction
     else:
         new_remaining = 999999999
 
@@ -272,6 +273,7 @@ async def humanize_text(
 class ParaphraseRequestPayload(BaseModel):
     text: str
     mode: str = "standard"
+    mood: Optional[str] = None
 
 
 @router.post("/paraphrase", response_model=HumanizeResponse)
@@ -342,11 +344,12 @@ async def paraphrase_text_endpoint(
         mode=req.mode,
         db=session,
         user_id=str(current_user.id),
+        mood=req.mood,
     )
 
     if llm_result.get("error") and not llm_result.get("humanized_text"):
-        raise BadRequestException(
-            message="Paraphrasing failed",
+        raise ServiceUnavailableException(
+            message="Paraphrasing service is unavailable right now. Please try again later.",
             detail={"error": llm_result["error"]},
         )
 
@@ -371,20 +374,19 @@ async def paraphrase_text_endpoint(
     if words_per_month != -1:
         word_cost = WORD_COSTS.get(req.mode, 1)
         deduction = word_count * word_cost
-        now = datetime.now(timezone.utc)
-        period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        period = datetime.now(timezone.utc).strftime("%Y-%m")
+        new_remaining = words_remaining - deduction
 
         usage_entry = WordUsage(
             user_id=current_user.id,
-            words_used=deduction,
-            mode=f"paraphrase_{req.mode}",
-            source="request",
-            request_id=created.id,
-            period_start=period_start,
+            words_delta=-deduction,
+            words_balance_after=new_remaining,
+            event_type="humanize_use",
+            reference_id=created.id,
+            billing_period=period,
+            description=f"Paraphrase request ({req.mode})",
         )
         await word_repo.add_entry(usage_entry)
-
-        new_remaining = words_remaining - deduction
     else:
         new_remaining = 999999999
 

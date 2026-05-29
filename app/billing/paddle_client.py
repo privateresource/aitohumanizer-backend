@@ -194,6 +194,64 @@ async def create_price(
     return resp.json().get("data", {}).get("id")
 
 
+async def list_customer_transactions(
+    customer_id: str,
+    status: str = "completed",
+    per_page: int = 50,
+) -> list[dict]:
+    client = _get_client()
+    all_txns = []
+    after = None
+    while True:
+        params: dict = {
+            "customer_id": [customer_id],
+            "status": status,
+            "per_page": min(per_page, 50),
+        }
+        if after:
+            params["after"] = after
+        resp = await client.get("/transactions", params=params)
+        if resp.status_code != 200:
+            break
+        data = resp.json()
+        items = data.get("data", [])
+        all_txns.extend(items)
+        meta = data.get("meta", {})
+        pagination = meta.get("pagination", {})
+        if not pagination.get("has_more"):
+            break
+        after = pagination.get("next_cursor")
+    return all_txns
+
+
+async def list_all_transactions(
+    status: str = "completed",
+    per_page: int = 50,
+) -> list[dict]:
+    client = _get_client()
+    all_txns = []
+    after = None
+    while True:
+        params: dict = {
+            "status": status,
+            "per_page": min(per_page, 50),
+        }
+        if after:
+            params["after"] = after
+        resp = await client.get("/transactions", params=params)
+        if resp.status_code != 200:
+            break
+        data = resp.json()
+        items = data.get("data", [])
+        all_txns.extend(items)
+        meta = data.get("meta", {})
+        pagination = meta.get("pagination", {})
+        if not pagination.get("has_more"):
+            break
+        after = pagination.get("next_cursor")
+    return all_txns
+
+
 async def create_product(name: str, description: str = "") -> Optional[str]:
     client = _get_client()
     body = {

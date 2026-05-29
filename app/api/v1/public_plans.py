@@ -30,6 +30,7 @@ class PublicPlanResponse(BaseModel):
     monthly_price_usd: float
     annual_price_usd: float
     original_price_usd: Optional[float] = None
+    discount_label: Optional[str] = None
     badge_text: Optional[str] = None
     display_order: int
     is_featured: bool
