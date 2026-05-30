@@ -319,7 +319,7 @@ async def upload_avatar(
             "uid": current_user.id,
             "filename": filename,
             "data": image_data_b64,
-            "mime": content_type,
+            "mime": "image/jpeg",
         },
     )
     await session.commit()
