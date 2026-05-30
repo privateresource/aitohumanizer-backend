@@ -336,13 +336,23 @@ async def get_subscription(
     plan_repo = PlanRepository(session)
     plan = await plan_repo.get_by_id(subscription.plan_id)
 
+    effective_wpm = plan.words_per_month if plan else 500
+    if plan:
+        pp_res = await session.execute(
+            text("SELECT max_words_per_month FROM pricing_plans WHERE slug = :slug"),
+            {"slug": plan.slug},
+        )
+        pp_row = pp_res.fetchone()
+        if pp_row and pp_row.max_words_per_month is not None:
+            effective_wpm = pp_row.max_words_per_month
+
     return SubscriptionResponse(
         id=str(subscription.id),
         plan=PlanSummary(
             id=str(plan.id) if plan else "",
             name=plan.name if plan else "Free",
             slug=plan.slug if plan else "free",
-            words_per_month=plan.words_per_month if plan else 500,
+            words_per_month=effective_wpm,
             words_per_request=plan.words_per_request if plan else 200,
             modes=plan.modes or [] if plan else ["standard"],
             price_monthly=plan.price_monthly if plan else 0,
