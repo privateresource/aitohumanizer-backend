@@ -283,46 +283,26 @@ async def upload_avatar(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ):
-    content_type = file.content_type or ""
-    if not content_type.startswith(ALLOWED_MIME_PREFIXES):
-        content_type = "image/jpeg"
-
     content = await file.read()
     if len(content) > AVATAR_MAX_BYTES:
         raise BadRequestException(message=f"File must be under {AVATAR_MAX_BYTES // (1024*1024)}MB")
 
+    image = None
     try:
-        image = Image.open(BytesIO(content))
-        image.verify()
-        image = Image.open(BytesIO(content))
-    except Exception:
+        img = Image.open(BytesIO(content))
+        img.verify()
+        img = Image.open(BytesIO(content))
+        image = _resize_avatar(img)
+    except Exception as e:
+        logger.warning("Avatar upload failed for user %s: %s", current_user.email, e)
         raise BadRequestException(message="Invalid or corrupted image file")
+    if image is None:
+        raise BadRequestException(message="Failed to process image")
 
-    image = _resize_avatar(image)
-
-    ext = ".jpg"
-    if content_type == "image/png":
-        ext = ".png"
-    elif content_type == "image/webp":
-        ext = ".webp"
-    elif content_type == "image/gif":
-        ext = ".gif"
-
-    filename = f"{uuid.uuid4()}{ext}"
-
+    filename = f"{uuid.uuid4()}.jpg"
     buf = BytesIO()
-    save_kwargs = {"optimize": True}
-    if ext in (".jpg", ".jpeg"):
-        save_kwargs["quality"] = 85
-    elif ext == ".png":
-        save_kwargs["compress_level"] = 6
-    elif ext == ".webp":
-        save_kwargs["quality"] = 85
-
-    try:
-        image.save(buf, **save_kwargs)
-    except Exception:
-        raise BadRequestException(message="Failed to process avatar")
+    image = image.convert("RGB")
+    image.save(buf, "JPEG", quality=85, optimize=True)
 
     image_data_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
