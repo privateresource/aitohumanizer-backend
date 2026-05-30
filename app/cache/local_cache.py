@@ -65,7 +65,8 @@ class LocalCache:
             for row in rows:
                 d = dict(row)
                 d["id"] = str(d["id"])
-                d["max_words_per_month"] = d.get("max_words_per_month", -1) or -1
+                val = d.get("max_words_per_month")
+                d["max_words_per_month"] = val if val is not None else -1
 
                 tools = await conn.fetch(
                     "SELECT * FROM plan_tool_limits WHERE plan_id = $1 ORDER BY tool",
