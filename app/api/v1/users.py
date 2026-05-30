@@ -1,8 +1,11 @@
 import base64
+import logging
 import os
 import uuid
 from io import BytesIO
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Query, UploadFile, File
 from fastapi.responses import Response
@@ -144,6 +147,12 @@ async def get_me(
         words_per_month = 500
     words_per_month = int(words_per_month)
 
+    logger.info(
+        "get_me user=%s plan_slug=%s words_per_month=%s words_used=%s",
+        current_user.email, plan_slug, words_per_month,
+        subscription.status if subscription else "no_sub",
+    )
+
     word_repo = WordUsageRepository(session)
     words_remaining = await word_repo.get_balance(current_user.id, words_per_month)
 
@@ -249,6 +258,7 @@ async def update_me(
 AVATAR_MAX_SIZE = 400
 AVATAR_MAX_BYTES = 5 * 1024 * 1024
 ALLOWED_MIME_PREFIXES = ("image/jpeg", "image/png", "image/webp", "image/gif")
+PLACEHOLDER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><rect width="400" height="400" fill="#374151"/><circle cx="200" cy="160" r="60" fill="#6b7280"/><ellipse cx="200" cy="340" rx="100" ry="70" fill="#6b7280"/></svg>'
 
 
 def _resize_avatar(image: Image.Image) -> Image.Image:
@@ -266,8 +276,9 @@ async def upload_avatar(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ):
-    if not file.content_type or not file.content_type.startswith(ALLOWED_MIME_PREFIXES):
-        raise BadRequestException(message="Only JPEG, PNG, WebP, and GIF images are allowed")
+    content_type = file.content_type or ""
+    if not content_type.startswith(ALLOWED_MIME_PREFIXES):
+        content_type = "image/jpeg"
 
     content = await file.read()
     if len(content) > AVATAR_MAX_BYTES:
@@ -283,11 +294,11 @@ async def upload_avatar(
     image = _resize_avatar(image)
 
     ext = ".jpg"
-    if file.content_type == "image/png":
+    if content_type == "image/png":
         ext = ".png"
-    elif file.content_type == "image/webp":
+    elif content_type == "image/webp":
         ext = ".webp"
-    elif file.content_type == "image/gif":
+    elif content_type == "image/gif":
         ext = ".gif"
 
     filename = f"{uuid.uuid4()}{ext}"
@@ -321,7 +332,7 @@ async def upload_avatar(
             "uid": current_user.id,
             "filename": filename,
             "data": image_data_b64,
-            "mime": file.content_type,
+            "mime": content_type,
         },
     )
     await session.commit()
@@ -343,7 +354,11 @@ async def get_avatar_file(
     )
     row = result.fetchone()
     if not row:
-        raise NotFoundException(message="Avatar not found")
+        return Response(
+            content=PLACEHOLDER_SVG.encode(),
+            media_type="image/svg+xml",
+            headers={"X-Avatar-Placeholder": "true"},
+        )
 
     image_data = base64.b64decode(row.image_data)
     return Response(content=image_data, media_type=row.mime_type)
