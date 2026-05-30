@@ -1,10 +1,11 @@
+import base64
 import os
 import uuid
 from io import BytesIO
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -139,6 +140,10 @@ async def get_me(
         limits = PLAN_LIMITS.get(plan_slug, {})
 
     words_per_month = limits.get("words_per_month", 500)
+    if words_per_month is None:
+        words_per_month = 500
+    words_per_month = int(words_per_month)
+
     word_repo = WordUsageRepository(session)
     words_remaining = await word_repo.get_balance(current_user.id, words_per_month)
 
@@ -166,7 +171,7 @@ async def get_me(
                 id=str(plan.id),
                 name=plan.name,
                 slug=plan.slug,
-                words_per_month=effective_words_per_month or plan.words_per_month,
+                words_per_month=effective_words_per_month if effective_words_per_month is not None else plan.words_per_month,
                 words_per_request=plan.words_per_request,
                 modes=plan.modes or [],
                 price_monthly=plan.price_monthly,
@@ -241,19 +246,9 @@ async def update_me(
     )
 
 
-AVATAR_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "avatars")
 AVATAR_MAX_SIZE = 400
 AVATAR_MAX_BYTES = 5 * 1024 * 1024
 ALLOWED_MIME_PREFIXES = ("image/jpeg", "image/png", "image/webp", "image/gif")
-
-
-def _delete_avatar_file(url: str | None):
-    if not url:
-        return
-    filename = url.split("/")[-1]
-    filepath = os.path.join(AVATAR_DIR, filename)
-    if os.path.exists(filepath):
-        os.remove(filepath)
 
 
 def _resize_avatar(image: Image.Image) -> Image.Image:
@@ -285,8 +280,6 @@ async def upload_avatar(
     except Exception:
         raise BadRequestException(message="Invalid or corrupted image file")
 
-    os.makedirs(AVATAR_DIR, exist_ok=True)
-
     image = _resize_avatar(image)
 
     ext = ".jpg"
@@ -298,8 +291,8 @@ async def upload_avatar(
         ext = ".gif"
 
     filename = f"{uuid.uuid4()}{ext}"
-    filepath = os.path.join(AVATAR_DIR, filename)
 
+    buf = BytesIO()
     save_kwargs = {"optimize": True}
     if ext in (".jpg", ".jpeg"):
         save_kwargs["quality"] = 85
@@ -309,12 +302,29 @@ async def upload_avatar(
         save_kwargs["quality"] = 85
 
     try:
-        image.save(filepath, **save_kwargs)
+        image.save(buf, **save_kwargs)
     except Exception:
-        raise BadRequestException(message="Failed to save avatar")
+        raise BadRequestException(message="Failed to process avatar")
 
-    old_url = current_user.avatar_url
-    _delete_avatar_file(old_url)
+    image_data_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    await session.execute(
+        text("DELETE FROM avatars WHERE user_id = :uid"),
+        {"uid": current_user.id},
+    )
+    await session.execute(
+        text(
+            "INSERT INTO avatars (user_id, filename, image_data, mime_type) "
+            "VALUES (:uid, :filename, :data, :mime)"
+        ),
+        {
+            "uid": current_user.id,
+            "filename": filename,
+            "data": image_data_b64,
+            "mime": file.content_type,
+        },
+    )
+    await session.commit()
 
     repo = UserRepository(session)
     await repo.update(current_user.id, {"avatar_url": filename})
@@ -323,18 +333,20 @@ async def upload_avatar(
 
 
 @router.get("/me/avatar/file/{filename}")
-async def get_avatar_file(filename: str):
-    filepath = os.path.join(AVATAR_DIR, filename)
-    if not os.path.exists(filepath):
+async def get_avatar_file(
+    filename: str,
+    session: AsyncSession = Depends(get_db_session),
+):
+    result = await session.execute(
+        text("SELECT image_data, mime_type FROM avatars WHERE filename = :filename"),
+        {"filename": filename},
+    )
+    row = result.fetchone()
+    if not row:
         raise NotFoundException(message="Avatar not found")
-    media_type = "image/jpeg"
-    if filename.endswith(".png"):
-        media_type = "image/png"
-    elif filename.endswith(".webp"):
-        media_type = "image/webp"
-    elif filename.endswith(".gif"):
-        media_type = "image/gif"
-    return FileResponse(filepath, media_type=media_type)
+
+    image_data = base64.b64decode(row.image_data)
+    return Response(content=image_data, media_type=row.mime_type)
 
 
 @router.delete("/me/avatar")

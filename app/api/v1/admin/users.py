@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db_session, get_admin_user
@@ -157,10 +158,20 @@ async def get_user_detail(
 
     if plan:
         limits = {"words_per_month": plan.words_per_month}
+        pp_result = await session.execute(
+            text("SELECT max_words_per_month FROM pricing_plans WHERE slug = :slug"),
+            {"slug": plan.slug},
+        )
+        pp_row = pp_result.fetchone()
+        if pp_row and pp_row.max_words_per_month is not None:
+            limits["words_per_month"] = pp_row.max_words_per_month
     else:
         limits = PLAN_LIMITS.get(plan_slug, {"words_per_month": 500})
 
     words_per_month = limits.get("words_per_month", 500)
+    if words_per_month is None:
+        words_per_month = 500
+    words_per_month = int(words_per_month)
     words_remaining = await word_repo.get_balance(user_id, words_per_month)
 
     if words_per_month == -1:

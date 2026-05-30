@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db_session, get_current_user
@@ -153,6 +154,13 @@ async def humanize_text(
             "words_per_request": plan.words_per_request,
             "modes": plan.modes or [],
         }
+        pp_result = await session.execute(
+            text("SELECT max_words_per_month FROM pricing_plans WHERE slug = :slug"),
+            {"slug": plan.slug},
+        )
+        pp_row = pp_result.fetchone()
+        if pp_row and pp_row.max_words_per_month is not None:
+            plan_limits["words_per_month"] = pp_row.max_words_per_month
 
     if subscription and subscription.status not in ("active", "trialing"):
         raise ForbiddenException(
@@ -305,6 +313,13 @@ async def paraphrase_text_endpoint(
             "words_per_request": plan.words_per_request,
             "modes": plan.modes or [],
         }
+        pp_result = await session.execute(
+            text("SELECT max_words_per_month FROM pricing_plans WHERE slug = :slug"),
+            {"slug": plan.slug},
+        )
+        pp_row = pp_result.fetchone()
+        if pp_row and pp_row.max_words_per_month is not None:
+            plan_limits["words_per_month"] = pp_row.max_words_per_month
 
     if subscription and subscription.status not in ("active", "trialing"):
         raise ForbiddenException(
