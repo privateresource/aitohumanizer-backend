@@ -20,9 +20,10 @@ WORD_COSTS = {
 }
 
 PLAN_LIMITS = {
+    "guest": {"words_per_month": 500, "words_per_request": 500, "modes": ["standard"]},
     "free": {"words_per_month": 1000, "words_per_request": 500, "modes": ["standard"]},
-    "starter": {"words_per_month": 15000, "words_per_request": 1500, "modes": ["standard"]},
-    "creator": {"words_per_month": 75000, "words_per_request": 3000, "modes": ["standard", "academic", "casual", "creative", "professional"]},
+    "starter": {"words_per_month": 10000, "words_per_request": 1500, "modes": ["standard"]},
+    "creator": {"words_per_month": 30000, "words_per_request": 3000, "modes": ["standard", "academic", "casual", "creative", "professional"]},
     "pro": {"words_per_month": 250000, "words_per_request": 3000, "modes": ["standard", "academic", "casual", "creative", "professional", "turbo"]},
     "unlimited": {"words_per_month": -1, "words_per_request": 3000, "modes": ["standard", "academic", "casual", "creative", "professional", "turbo"]},
 }

@@ -140,7 +140,14 @@ async def get_me(
             limits["words_per_month"] = pp_row.max_words_per_month
             effective_words_per_month = pp_row.max_words_per_month
     else:
-        limits = PLAN_LIMITS.get(plan_slug, {})
+        limits = {"words_per_month": PLAN_LIMITS.get(plan_slug, {}).get("words_per_month", 500)}
+        pp_result = await session.execute(
+            text("SELECT max_words_per_month FROM pricing_plans WHERE slug = :slug"),
+            {"slug": plan_slug},
+        )
+        pp_row = pp_result.fetchone()
+        if pp_row and pp_row.max_words_per_month is not None:
+            limits["words_per_month"] = pp_row.max_words_per_month
 
     words_per_month = limits.get("words_per_month", 500)
     if words_per_month is None:
@@ -369,7 +376,11 @@ async def delete_avatar(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db_session),
 ):
-    _delete_avatar_file(current_user.avatar_url)
+    await session.execute(
+        text("DELETE FROM avatars WHERE user_id = :uid"),
+        {"uid": current_user.id},
+    )
+    await session.commit()
     repo = UserRepository(session)
     await repo.update(current_user.id, {"avatar_url": None})
     return {"avatar_url": None}

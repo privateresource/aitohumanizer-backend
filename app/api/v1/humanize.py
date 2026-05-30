@@ -144,6 +144,12 @@ async def humanize_text(
     if not subscription:
         plan_slug = "free"
         plan_limits = PLAN_LIMITS.get("free", {})
+        pp_result = await session.execute(
+            text("SELECT max_words_per_month FROM pricing_plans WHERE slug = 'free'"),
+        )
+        pp_row = pp_result.fetchone()
+        if pp_row and pp_row.max_words_per_month is not None:
+            plan_limits["words_per_month"] = pp_row.max_words_per_month
     else:
         plan = await plan_repo.get_by_id(subscription.plan_id)
         if not plan:
@@ -166,6 +172,13 @@ async def humanize_text(
         raise ForbiddenException(
             message="Subscription is not active",
             detail={"status": subscription.status},
+        )
+
+    allowed_modes = plan_limits.get("modes", ["standard"])
+    if req.mode not in allowed_modes:
+        raise BadRequestException(
+            message=f"Mode '{req.mode}' not allowed on your plan",
+            detail={"allowed_modes": allowed_modes, "requested": req.mode},
         )
 
     max_per_request = plan_limits.get("words_per_request", 200)
@@ -303,6 +316,12 @@ async def paraphrase_text_endpoint(
     if not subscription:
         plan_slug = "free"
         plan_limits = PLAN_LIMITS.get("free", {})
+        pp_result = await session.execute(
+            text("SELECT max_words_per_month FROM pricing_plans WHERE slug = 'free'"),
+        )
+        pp_row = pp_result.fetchone()
+        if pp_row and pp_row.max_words_per_month is not None:
+            plan_limits["words_per_month"] = pp_row.max_words_per_month
     else:
         plan = await plan_repo.get_by_id(subscription.plan_id)
         if not plan:
@@ -325,6 +344,13 @@ async def paraphrase_text_endpoint(
         raise ForbiddenException(
             message="Subscription is not active",
             detail={"status": subscription.status},
+        )
+
+    allowed_modes = plan_limits.get("modes", ["standard"])
+    if req.mode not in allowed_modes:
+        raise BadRequestException(
+            message=f"Mode '{req.mode}' not allowed on your plan",
+            detail={"allowed_modes": allowed_modes, "requested": req.mode},
         )
 
     max_per_request = plan_limits.get("words_per_request", 200)

@@ -166,7 +166,14 @@ async def get_user_detail(
         if pp_row and pp_row.max_words_per_month is not None:
             limits["words_per_month"] = pp_row.max_words_per_month
     else:
-        limits = PLAN_LIMITS.get(plan_slug, {"words_per_month": 500})
+        limits = {"words_per_month": PLAN_LIMITS.get(plan_slug, {}).get("words_per_month", 500)}
+        pp_result = await session.execute(
+            text("SELECT max_words_per_month FROM pricing_plans WHERE slug = :slug"),
+            {"slug": plan_slug},
+        )
+        pp_row = pp_result.fetchone()
+        if pp_row and pp_row.max_words_per_month is not None:
+            limits["words_per_month"] = pp_row.max_words_per_month
 
     words_per_month = limits.get("words_per_month", 500)
     if words_per_month is None:
@@ -265,6 +272,31 @@ async def adjust_words(
     now = datetime.now(timezone.utc)
     period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
+    sub_repo = SubscriptionRepository(session)
+    plan_repo = PlanRepository(session)
+    subscription = await sub_repo.get_by_user(user_id)
+    words_per_month = 500
+    if subscription:
+        plan = await plan_repo.get_by_id(subscription.plan_id)
+        if plan:
+            words_per_month = plan.words_per_month
+            pp_result = await session.execute(
+                text("SELECT max_words_per_month FROM pricing_plans WHERE slug = :slug"),
+                {"slug": plan.slug},
+            )
+            pp_row = pp_result.fetchone()
+            if pp_row and pp_row.max_words_per_month is not None:
+                words_per_month = pp_row.max_words_per_month
+    else:
+        pp_result = await session.execute(
+            text("SELECT max_words_per_month FROM pricing_plans WHERE slug = 'free'"),
+        )
+        pp_row = pp_result.fetchone()
+        if pp_row and pp_row.max_words_per_month is not None:
+            words_per_month = pp_row.max_words_per_month
+        else:
+            words_per_month = PLAN_LIMITS.get("free", {}).get("words_per_month", 500)
+
     current_balance = await word_repo.get_balance(user_id, words_per_month)
     entry = WordUsage(
         user_id=user_id,
@@ -277,18 +309,6 @@ async def adjust_words(
     )
 
     await word_repo.add_entry(entry)
-
-    from app.core.constants import PLAN_LIMITS
-    sub_repo = SubscriptionRepository(session)
-    plan_repo = PlanRepository(session)
-    subscription = await sub_repo.get_by_user(user_id)
-    words_per_month = 500
-    if subscription:
-        plan = await plan_repo.get_by_id(subscription.plan_id)
-        if plan:
-            words_per_month = plan.words_per_month
-    else:
-        words_per_month = PLAN_LIMITS.get("free", {}).get("words_per_month", 500)
 
     words_remaining = await word_repo.get_balance(user_id, words_per_month)
 
