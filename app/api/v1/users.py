@@ -311,7 +311,7 @@ async def upload_avatar(
     return {"avatar_url": filename}
 
 
-@router.get("/me/avatar/file/{filename}")
+@router.get("/users/me/avatar/file/{filename}")
 async def get_avatar_file(filename: str):
     filepath = os.path.join(AVATAR_DIR, filename)
     if not os.path.exists(filepath):
