@@ -67,6 +67,12 @@ async def create_transaction(
         body["customer_id"] = customer_id
 
     resp = await client.post("/transactions", json=body)
+    if resp.status_code >= 400:
+        try:
+            err_body = resp.json()
+        except Exception:
+            err_body = resp.text[:500]
+        logger.error("Paddle create_transaction failed: status=%s body=%s", resp.status_code, err_body)
     resp.raise_for_status()
     data = resp.json().get("data", {})
     return data
