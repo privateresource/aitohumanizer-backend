@@ -204,7 +204,7 @@ async def list_customer_transactions(
     after = None
     while True:
         params: dict = {
-            "customer_id": [customer_id],
+            "customer_id": customer_id,
             "status": status,
             "per_page": min(per_page, 50),
         }
